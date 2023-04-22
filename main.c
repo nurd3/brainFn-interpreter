@@ -27,7 +27,7 @@
 #define EXCEPTION(x...)		{fprintf(DEBUG_STREAM, "bfn exception at line %d: ", line + 1); fprintf(DEBUG_STREAM, x); errs++; exit(0);}
 #define PARSER_ERR(x...)	{fprintf(DEBUG_STREAM, "bfn parse error at line %d: ", line + 1); fprintf(DEBUG_STREAM, x); errs++;}
 #define WARN(x...)			{fprintf(DEBUG_STREAM, "\nbfn warning at line %d: ", line); fprintf(DEBUG_STREAM, x); errs++; break;}
-#define DEBUG(x...)			{fprintf(DEBUG_STREAM, x);}
+#define DEBUG(x...)			{if (debugMode) fprintf(DEBUG_STREAM, x);}
 #define IS_ABCNUM(c)		((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
 
 struct LABEL {
@@ -46,6 +46,7 @@ struct stack *out;
 struct loop_stack *loopStack;
 struct LABEL *labels;
 FILE *DEBUG_STREAM;
+int debugMode = 0;
 
 u_int tSize = 65536;
 u_int len = 0;
@@ -94,6 +95,9 @@ int main(int argc, char **argv) {
 						ERR("couldn't use \"%s\" for logging", argv[i + 1]);
 				}
 				i++;
+			}
+			if (!strcmp("-debug", argv[i])) {
+				debugMode = 1;
 			}
 		}
 	}
