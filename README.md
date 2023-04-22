@@ -1,5 +1,5 @@
 # brainFn-interpreter
-An interpreter for brainFn
+An interpreter for brainFn, learn about brainFn on the [https://esolangs.org/wiki/BrainFn](Esolangs Wiki)
 
 # Run Guide
 here is the general format for running the interpreter (using the command line):
