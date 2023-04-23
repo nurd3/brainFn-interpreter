@@ -1,7 +1,7 @@
 // brainFn-interpreter/main.c
 // author    Dante Davis
 // from      2023 April 20th
-// to        2023 April 22nd
+// to        2023 April 23rd
 // GNU GPL 3.0 COPYLEFT LICENSE
 // i apologize for the rather disgusting mess that is this code.
 #include <stdio.h>
@@ -23,30 +23,32 @@
 #define RESET				"\033[0m"
 #define RED					"\033[31m"
 #define YELW				"\033[0;33m"
-#define ERR(x...)			{fprintf(DEBUG_STREAM, "bfn err: " x); errs++;}
-#define EXCEPTION(x...)		{fprintf(DEBUG_STREAM, "bfn exception at line %d: ", line + 1); fprintf(DEBUG_STREAM, x); errs++; exit(0);}
-#define PARSER_ERR(x...)	{fprintf(DEBUG_STREAM, "bfn parse error at line %d: ", line + 1); fprintf(DEBUG_STREAM, x); errs++;}
-#define WARN(x...)			{fprintf(DEBUG_STREAM, "\nbfn warning at line %d: ", line); fprintf(DEBUG_STREAM, x); errs++; break;}
-#define DEBUG(x...)			{if (debugMode) fprintf(DEBUG_STREAM, x);}
+#define LOG(x...)			{if (echo) printf(x); if (logMode) fprintf(DEBUG_STREAM, x);}
+#define ERR(x...)			{LOG( "bfn err: " x); errs++;}
+#define EXCEPTION(x...)		{LOG("bfn exception at line %d: ", line + 1); LOG(x); exit(0);}
+#define WARN(x...)			{LOG("\nbfn warning at line %d: ", line); LOG(x); break;}
+#define DEBUG(x...)			{if (debugMode) LOG(x);}
 #define IS_ABCNUM(c)		((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
 
+struct index_stack {
+	u_int index;
+	struct index_stack *next;
+};
 struct LABEL {
 	char name[33];
-	u_int gto;
+	struct index_stack *gto;
 	struct LABEL *next;
 };
-struct loop_stack {
-	u_int gto;
-	struct loop_stack *next;
-};
 // used for passing arguments to functions
-struct stack *inp;
+struct stack *arg;
 // used for returning values from functions
-struct stack *out;
-struct loop_stack *loopStack;
+struct stack *ret;
+struct index_stack *loopStack;
 struct LABEL *labels;
 FILE *DEBUG_STREAM;
 int debugMode = 0;
+int logMode = 0;
+int echo = 1;
 
 u_int tSize = 65536;
 u_int len = 0;
@@ -58,16 +60,13 @@ int eq(char a[], char b[], int len);
 // helper function that checks what line a given index is on in a string
 u_int getLine(u_int index, char *str);
 // the function that interprets the bfn code
-int run(u_int index, u_int len, char *src, char *tape);
+struct stack *run(u_int index, u_int len, char *src, struct stack *args);
 
 // main function, sets things up
 int main(int argc, char **argv) {
 	CLEAR;
 	u_int errs = 0;
 	DEBUG_STREAM = stdout;
-	// initialize the stacks
-	inp = new_stack();
-	out = new_stack();
 	
 	if (argc < 2)
 		ERR("no script provided\n");
@@ -84,8 +83,9 @@ int main(int argc, char **argv) {
 	DEBUG_STREAM = stdout;
 	// read flags
 	if (argc > 3) {
-		for (u_int i = 3; i < argc; ++i){
+		for (u_int i = 3; i < argc; ++i) {
 			if (!strcmp("-log", argv[i])) {
+				logMode = 1;
 				if (argc == i + 1) {
 					ERR("expected location after \"-log\"\n");
 				}
@@ -98,6 +98,21 @@ int main(int argc, char **argv) {
 			}
 			if (!strcmp("-debug", argv[i])) {
 				debugMode = 1;
+			}
+			if (!strcmp("-echo", argv[i])) {
+				if (argc == i + 1) {
+					ERR("expected \"on\" or \"off\" after \"-log\"\n");
+				}
+				else {
+					if (!strcmp("on", argv[i + 1]))
+						echo = 1;
+					else if (!strcmp("off", argv[i + 1]))
+						echo = 0;
+					else {
+						ERR("expected \"on\" or \"off\" after \"-log\"\n");
+					}
+				}
+				i++;
 			}
 		}
 	}
@@ -114,7 +129,7 @@ int main(int argc, char **argv) {
 	// initialize the label array (used for labels (duh))
 	labels = calloc(1, sizeof(struct LABEL));
 	// initiallize the loop stack
-	loopStack = calloc(1, sizeof(struct loop_stack));
+	loopStack = calloc(1, sizeof(struct index_stack));
 
 	// read the file contents into a string
 	char *src;
@@ -136,7 +151,7 @@ int main(int argc, char **argv) {
 	// run the script
 	run(0, len, src, NULL);
 
-	DEBUG("program terminated naturally with %d function calls in total\n", fnCalls);
+	LOG("program terminated naturally with %d function calls in total\n", fnCalls);
 	return 0;
 }
 
@@ -159,18 +174,158 @@ u_int getLine(u_int index, char *str) {
 	}
 	return line;
 }
+#define DO_CONCAT(i, line)		concat(i, src, len, line, locals)
+// helper function that concatenates functions together
+struct index_stack *concat(u_int *i, char *src, u_int len, u_int *lines, struct LABEL *locals) {
+	struct index_stack *ret;
+	struct index_stack *x;
+	ret = calloc(1, sizeof(struct index_stack));
+	x = ret;
+	u_int extraLines = 0;
+	while (src[*i] != ')') {
+		++*i;
+		if (*i >= len) {
+			u_int line = *lines;
+			EXCEPTION("concatenation never closed");
+		}
+		char ch = src[*i];
+		DEBUG("%d concat %c\n", *i, ch);
+		if (ch == '\n')
+			extraLines++;
+		else if (ch == '(') {			// meta concatenation
+			struct index_stack *y = DO_CONCAT(i, lines);
+			struct index_stack *z = y;
+			x->next = y;
+			while (z->next != NULL)
+				z = z->next;
+			x = z;
+		} else if (ch == '\'') {		// label concatenation
+			int j = 0;
+			int stop = 0;
+			int local = 0;
+			char label[33];
+			++*i;
+			if (src[*i] == ':') {
+				local = 1;
+				++*i;
+			} else
+				local = 0;
+			while (*i < len && stop == 0) {
+				ch = src[*i];
+				label[j++] = ch;
+				++*i;
+				if (j > 31) {
+					u_int line = *lines + extraLines;
+					EXCEPTION("(in concat) label reference too long\n");
+				}
+				if (ch == '\'') {
+					label[j - 1] = 0;
+					break;
+				}
+				else if (!IS_ABCNUM(ch) && ch != '_') {
+					u_int line = *lines + extraLines;
+					if (ch == '\n') {
+						EXCEPTION("(in concat) illegal label character '\\n'\n")
+					}
+					else if (ch == '\t') {
+						EXCEPTION("(in concat) illegal label character '\\t'\n")
+					}
+					else if (ch == '\b') {
+						EXCEPTION("(in concat) illegal label character '\\b'\n")
+					}
+					else if (ch == '\0') {
+						EXCEPTION("(in concat) illegal label character '\\0'\n")
+					}
+					else {
+						EXCEPTION("(in concat) illegal label character '%c'\n", ch)
+					}
+				}
+			}
+			// some debug code that prints the label
+			DEBUG("%d concat \"%s\"\n", *i, label);
+			
+			int labelLen = strlen(label);	// label length
+			int labelExists = 0;
+			struct index_stack *y;		// where we store the goto
+			// get the label
+			for (struct LABEL *j = local? locals: labels; j != NULL; j = j->next) {
+				DEBUG("%d concat \"%s\" == \"%s\"? ", *i, label, j->name);
+				if (j->name[0] == label[0])
+					if (labelLen == strlen(j->name))
+						if (eq(j->name, label, labelLen)) {
+							y = j->gto;
+							labelExists = 1;
+							break;
+						}
+				DEBUG("no\n");
+			}
+			if (labelExists) DEBUG("yes\n");
+			// if the label wasn't found then yell at the user
+			if (!labelExists) {
+				u_int line = *lines + extraLines;
+				if (local) {
+					EXCEPTION("(in concat) reference of undeclared local \"%s\"\n", label);
+				} else {
+					EXCEPTION("(in concat) reference of undeclared label \"%s\"\n", label);
+				}
+			}
+			
+			struct index_stack *z = y;
+			x->next = y;
+			while (z->next != NULL)
+				z = z->next;
+			x = z;
+		} else if (ch == '{') {		// anonymous function concatenation
+			// create the label
+			struct index_stack *s = calloc(1, sizeof(struct index_stack));
+			s->index = *i;
+			x->next = s;	// append the label
+			x = s;
+			// we don't want to run anything inside the function
+					// until it is called
+					// so we skip until the function is closed
+			int nestCount = 1;				// used to count the number of curly brackets
+			int extraExtraLines = 0;		// counts the amount the line breaks are encountered while skipping the function
+			// we don't count directly to the line variable because
+			// if the function is ever closed
+			// then the error will tell the user the line number of where the function
+			// was declared rather than just saying what the last line number is
+			do {
+				++*i;
+				if (*i >= len) {
+					u_int line = *lines + extraLines;
+					EXCEPTION("(in concat) function never closed\n");
+				}
+				ch = src[*i];
+				if (ch == '{')
+					nestCount++;
+				else if (ch == '}')
+					nestCount--;
+				else if (ch == '\n')
+					extraExtraLines++;
+			} while (nestCount);
+			// add up the line counts
+			extraLines += extraExtraLines;
+		}
+	}
+	*lines += extraLines;
+	return ret->next;
+}
 // the function that interprets the bfn code
-int run(u_int index, u_int len, char *src, char *tape) {
+struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
+	struct stack *arg = new_stack();
+	struct stack *ret = new_stack();
 	u_int errs = 0;
-	if (tape == NULL)
-		tape = calloc(tSize, sizeof(char));
+	char *tape = calloc(tSize, sizeof(char));
 	u_int tp = 0;
 	u_int line = getLine(index, src);
+	struct LABEL *locals = calloc(1, sizeof(struct LABEL));
 	// label variable is used to store
 	// the name of a label
 	// before it is used by the program
 	char label[33];
-	DEBUG("length of script: %d, indexing from: %d\n", len, index);
+	int local = 0;
+	LOG("length of script: %d, indexing from: %d\n", len, index);
 	for (u_int i = index; i < len; i++) {
 		DEBUG("%d %c\n", i, src[i]);
 		if (src[i] == '\n')
@@ -192,28 +347,27 @@ int run(u_int index, u_int len, char *src, char *tape) {
 		else if (src[i] == '<')		// shift pointer to the left
 			--tp;
 		else if (src[i] == '$')		// push to input stack
-			push(inp, tape[tp]);
+			push(arg, tape[tp]);
 		else if (src[i] == '&')		// push to return stack
-			push(out, tape[tp]);
+			push(ret, tape[tp]);
 		else if (src[i] == '%')		// pop from input stack
-			tape[tp] = pop(inp);
+			tape[tp] = pop(args);
 		else if (src[i] == ':')		// pop from return stack
-			tape[tp] = pop(out);
+			tape[tp] = pop(ret);
 		else if (src[i] == '[') {	// while loop
-			struct loop_stack *x = calloc(1, sizeof(struct stack));
+			struct index_stack *x = calloc(1, sizeof(struct stack));
 			x->next = loopStack;
-			x->gto = i;
+			x->index = i;
 			loopStack = x;
 		} else if (src[i] == ']') {
 			if (loopStack->next == NULL) {
 				WARN("unexpected ']'\n");
 				return 0;
 			} else if (tape[tp])
-				i = loopStack->gto;
+				i = loopStack->index;
 			else {
-				struct loop_stack *x = loopStack;
-				loopStack->gto = loopStack->next->gto;
-				struct stack *y = loopStack->next->next;
+				loopStack->index = loopStack->next->index;
+				struct index_stack *y = loopStack->next->next;
 				free(loopStack->next);
 				loopStack->next = y;
 			}
@@ -221,6 +375,11 @@ int run(u_int index, u_int len, char *src, char *tape) {
 			int j = 0;
 			int stop = 0;
 			i++;
+			if (src[i] == ':') {
+				local = 1;
+				i++;
+			} else
+				local = 0;
 			while (i < len && stop == 0) {
 				label[j++] = src[i++];
 				if (j > 31) {
@@ -249,21 +408,29 @@ int run(u_int index, u_int len, char *src, char *tape) {
 				}
 			}
 			// some debug code that prints the label
-			DEBUG("%d \"%s\"\n", i, label);
+			DEBUG("%d \"", i);
+			if (local)
+				DEBUG(":");
+			DEBUG("%s\"\n", label);
 		} else if (src[i] == '{') {		// function declaration
 			// create the label
 			struct LABEL *l = calloc(1, sizeof(struct LABEL));
-			l->gto = i;		// set the position to go to when called
-			
+			struct index_stack *s = calloc(1, sizeof(struct index_stack));
+			s->index = i; 
+			l->gto = s;		// set the position to go to when called
 			for (int j = 0; j < 32; ++j) {	// set the name of the label
 				l->name[j] = label[j];
 				label[j] = 0;
 			}
-			struct LABEL *x = labels;
+			struct LABEL *x = local? locals: labels;
+			DEBUG("%d new func \"%s\"\n", i, l->name);
 			
-			while (x->next != NULL)	// get the last label
+			while (x->next != NULL && strcmp(l->name, x->next->name))	// find where we're going to store our label
 				x = x->next;
-
+			if (x->next == NULL)
+				l->next = NULL;
+			else
+				l->next = x->next->next;
 			x->next = l;	// append the label
 			// we don't want to run anything inside the function
 					// until it is called
@@ -290,40 +457,68 @@ int run(u_int index, u_int len, char *src, char *tape) {
 		} else if (src[i] == ';') {			// function call
 			fnCalls++;						// increase fnCalls counter
 			int labelLen = strlen(label);	// label length
-			int labelExists = 0;			// boolean to check if the label exists
-			u_int go_to = 0;				// the index to go to
-
+			int labelExists = 0;
+			struct LABEL *obj = NULL;		// where we store the label
 			// get the label
-			for (struct LABEL *x = labels; x != NULL; x = x->next) {
+			for (struct LABEL *x = local? locals: labels; x != NULL; x = x->next) {
 				if (x->name[0] == label[0])
 					if (labelLen == strlen(x->name))
 						if (eq(x->name, label, labelLen)) {
-							go_to = x->gto;
+							obj = x;
 							labelExists = 1;
 							break;
 						}
 			}
+			
 			// if the label wasn't found then yell at the user
-			if (!labelExists)
-				EXCEPTION("reference of undeclared label \"%s\"\n", label);
+			if (!labelExists) {
+				if (local) {
+					EXCEPTION("reference of undeclared local \"%s\"\n", label);
+				} else {
+					EXCEPTION("reference of undeclared label \"%s\"\n", label);
+				}
+			}
 			
 			// reset the label variable
 			for (int j = 32; j; --j)
 				label[j] = 0;
 			scope++;			// increase the scope counter
-			run(go_to + 1, len, src, NULL);		// run the function
-			scope--;		// decrease the scope counter
+			struct index_stack *x = obj->gto;
+			do {
+				arg = run(x->index + 1, len, src, arg);	// run the function
+				x = x->next;
+			} while (x != NULL);
+			ret = arg;
+			scope--;			// decrease the scope counter
 		} else if (src[i] == '}') {
 			if (scope < 1)
 				WARN("unexpected '}'");
-			return 0;
+			return ret;
+		} else if (src[i] == '(') {
+			// create the label
+			struct LABEL *l = calloc(1, sizeof(struct LABEL));
+			l->gto = DO_CONCAT(&i, &line);		// set the position to go to when called
+			for (int j = 0; j < 32; ++j) {	// set the name of the label
+				l->name[j] = label[j];
+				label[j] = 0;
+			}
+			struct LABEL *x = local? locals: labels;
+			while (x->next != NULL && strcmp(x->next->name, l->name))	// find where we're going to store our label
+				x = x->next;
+			if (x->next == NULL)
+				l->next = NULL;
+			else
+				l->next = x->next->next;
+			x->next = l;
+			
+			// reset the label variable
+			for (int j = 32; j; --j)
+				label[j] = 0;
 		}
 		
 		tp %= tSize;
 		if (tp < 0)
 			tp += tSize;
 	}
-	if (scope)
-		return 1;
-	return 0;
+	return ret;
 }
