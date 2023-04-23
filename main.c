@@ -1,7 +1,7 @@
 // brainFn-interpreter/main.c
 // author    Dante Davis
 // from      2023 April 20th
-// to        2023 April 23rd
+// to        2023 April 22nd
 // GNU GPL 3.0 COPYLEFT LICENSE
 // i apologize for the rather disgusting mess that is this code.
 #include <stdio.h>
@@ -55,6 +55,8 @@ u_int len = 0;
 u_int fnCalls = 0;			// the amount of times a function has been called
 u_int scope = 0;			// how deep we are in scope
 
+// helper function that runs a bfn script
+struct stack *bfn_runFile(char *filename, struct stack *args);
 // helper function that checks if two strings are equal
 int eq(char a[], char b[], int len);
 // helper function that checks what line a given index is on in a string
@@ -121,10 +123,19 @@ int main(int argc, char **argv) {
 	if (tSize < 3)
 		ERR("tape size too small\n");
 
+	bfn_runFile(argv[1], NULL);
+
+	LOG("program terminated naturally with %d function calls in total\n", fnCalls);
+	return 0;
+}
+
+// helper function that runs a bfn script
+struct stack *bfn_runFile(char *filename, struct stack *args) {
+	u_int errs = 0;
 	// open the script
-	FILE *fp = fopen(argv[1], "r");
+	FILE *fp = fopen(filename, "r");
 	if (fp == NULL)		// if we cant access the file or it doesnt exist
-		ERR("couldn't find file %s\n", argv[1]);
+		ERR("couldn't find file %s\n", filename);
 
 	// initialize the label array (used for labels (duh))
 	labels = calloc(1, sizeof(struct LABEL));
@@ -149,10 +160,7 @@ int main(int argc, char **argv) {
 		exit(0);
 
 	// run the script
-	run(0, len, src, NULL);
-
-	LOG("program terminated naturally with %d function calls in total\n", fnCalls);
-	return 0;
+	return run(0, len, src, args);
 }
 
 // helper function that checks if two strings are equal
@@ -190,7 +198,32 @@ struct index_stack *concat(u_int *i, char *src, u_int len, u_int *lines, struct 
 		}
 		char ch = src[*i];
 		DEBUG("%d concat %c\n", *i, ch);
-		if (ch == '\n')
+		if (ch == '/') {
+			++*i;
+			if (1 + *i >= len) {
+				u_int line = *lines;
+				EXCEPTION("concatenation never closed");
+			}
+			ch = src[*i];
+			if (ch == '-') {
+				DEBUG("%d concat comment\n", *i);
+				u_int extraExtraLines = 0;
+				while (1) {
+					++*i;
+					if (1 + *i >= len) {
+						u_int line = extraLines + *lines;
+						WARN("(in concat) comment never closed");
+						exit(0);
+					}
+					if (ch == '\n')
+						extraExtraLines++;
+					else if (ch == '-' && src[1 + *i] == '/')
+						break;
+				}
+				extraLines += extraExtraLines;
+			}
+		}
+		else if (ch == '\n')
 			extraLines++;
 		else if (ch == '(') {			// meta concatenation
 			struct index_stack *y = DO_CONCAT(i, lines);
@@ -328,9 +361,48 @@ struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
 	LOG("length of script: %d, indexing from: %d\n", len, index);
 	for (u_int i = index; i < len; i++) {
 		DEBUG("%d %c\n", i, src[i]);
-		if (src[i] == '\n')
+		
+		if (src[i] == '/') {
+			++i;
+			if (1 + i >= len) {
+				if (scope) {
+					ERR("function never cloesed\n")
+				} else
+					exit(0);
+			}
+			char ch = src[i];
+			if (ch == '-') {
+				DEBUG("%d comment\n", i);
+				u_int extraLines = 0;
+				while (1) {
+					++i;
+					if (1 + i >= len) {
+						WARN("comment never closed");
+						exit(0);
+					}
+					if (ch == '\n')
+						extraLines++;
+					else if (ch == '-' && src[1 + i] == '/')
+						break;
+				}
+				line += extraLines;
+			}
+		}
+		else if (src[i] == '\n')
 			line++;
-		else if (src[i] == '=')		// reset pointer value
+		else if (src[i] == '~') {
+			char *filename = calloc(len, sizeof(char));
+			int j = 0;
+			while (src[i] != '\n') {
+				i++;
+				if (i >= len) {
+					break;
+				}
+				filename[j++] = src[i];
+			}
+			ret = bfn_runFile(filename, args);
+			free(filename);
+		} else if (src[i] == '=')		// reset pointer value
 			tape[tp] = 0;
 		else if (src[i] == '+')		// increment
 			++tape[tp];
