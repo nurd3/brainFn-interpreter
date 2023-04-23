@@ -415,13 +415,13 @@ struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
 			// char *filename;
 			// filename = malloc(len * sizeof(char));
 			// int j = 0;
-			// while (src[i] != '\n') {
-			// 	i++;
+			while (src[i] != '\n') {
+				i++;
 			// 	if (i >= len) {
 			// 		break;
 			// 	}
 			// 	filename[j++] = src[i];
-			// }
+			}
 			// filename[--j] = 0;
 			// ret = bfn_runFile(filename, args);
 			// free(filename);
