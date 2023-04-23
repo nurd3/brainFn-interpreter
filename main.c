@@ -25,8 +25,8 @@
 #define YELW				"\033[0;33m"
 #define LOG(x...)			{if (echo) printf(x); if (logMode) fprintf(DEBUG_STREAM, x);}
 #define ERR(x...)			{LOG( "bfn err: " x); errs++;}
-#define EXCEPTION(x...)		{LOG("bfn exception at line %d: ", line + 1); LOG(x); exit(0);}
-#define WARN(x...)			{LOG("\nbfn warning at line %d: ", line); LOG(x); break;}
+#define EXCEPTION(x...)		{LOG("bfn exception at line %d: ", line + 1); LOG(x); fclose(DEBUG_STREAM); exit(0);}
+#define WARN(x...)			{LOG("\nbfn warning at line %d: ", line); LOG(x);}
 #define DEBUG(x...)			{if (debugMode) LOG(x);}
 #define IS_ABCNUM(c)		((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9'))
 
@@ -50,8 +50,9 @@ int debugMode = 0;
 int logMode = 0;
 int echo = 1;
 
-u_int tSize = 65536;
+char *src;
 u_int len = 0;
+u_int tSize = 65536;
 u_int fnCalls = 0;			// the amount of times a function has been called
 u_int scope = 0;			// how deep we are in scope
 
@@ -122,10 +123,18 @@ int main(int argc, char **argv) {
 			// encounter a segfault when trying to edit the tape
 	if (tSize < 3)
 		ERR("tape size too small\n");
-
+	// exit if there are any errors
+	if (errs) {
+		exit(0);
+		fclose(DEBUG_STREAM);
+	}
+	
+	src = calloc(len + 1, sizeof(char));
+	
 	bfn_runFile(argv[1], NULL);
 
 	LOG("program terminated naturally with %d function calls in total\n", fnCalls);
+	fclose(DEBUG_STREAM);
 	return 0;
 }
 
@@ -133,9 +142,15 @@ int main(int argc, char **argv) {
 struct stack *bfn_runFile(char *filename, struct stack *args) {
 	u_int errs = 0;
 	// open the script
-	FILE *fp = fopen(filename, "r");
-	if (fp == NULL)		// if we cant access the file or it doesnt exist
+	FILE *fp;
+	fp = fopen(filename, "r");
+	u_int xlen = 0;
+	struct stack *x;
+	if (fp == NULL)	{	// if we cant access the file or it doesnt exist
 		ERR("couldn't find file %s\n", filename);
+		fclose(DEBUG_STREAM);
+		exit(0);
+	}
 
 	// initialize the label array (used for labels (duh))
 	labels = calloc(1, sizeof(struct LABEL));
@@ -143,24 +158,30 @@ struct stack *bfn_runFile(char *filename, struct stack *args) {
 	loopStack = calloc(1, sizeof(struct index_stack));
 
 	// read the file contents into a string
-	char *src;
+	char *str;
 	fseek(fp, 0, SEEK_END);
-	len = ftell(fp);
+	xlen = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
-	src = calloc(len, sizeof(char));
-	if (src) {
-		fread(src, 1, len, fp);
+	str = calloc(xlen, sizeof(char));
+	if (str) {
+		fread(str, 1, xlen, fp);
 	} else {
 		ERR("script is empty\n");
+		fclose(fp);
+		x = calloc(1, sizeof(struct stack));
+		return x;
 	}
+	printf(".\n");
 	fclose(fp);
-	
-	// exit if there are any errors
-	if (errs)
-		exit(0);
+	printf(".\n");
 
+	strcat(src, str);
 	// run the script
-	return run(0, len, src, args);
+	x = run(len, len + xlen, src, args);
+
+	len += xlen;
+	
+	return x;
 }
 
 // helper function that checks if two strings are equal
@@ -391,17 +412,20 @@ struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
 		else if (src[i] == '\n')
 			line++;
 		else if (src[i] == '~') {
-			char *filename = calloc(len, sizeof(char));
-			int j = 0;
-			while (src[i] != '\n') {
-				i++;
-				if (i >= len) {
-					break;
-				}
-				filename[j++] = src[i];
-			}
-			ret = bfn_runFile(filename, args);
-			free(filename);
+			// char *filename;
+			// filename = malloc(len * sizeof(char));
+			// int j = 0;
+			// while (src[i] != '\n') {
+			// 	i++;
+			// 	if (i >= len) {
+			// 		break;
+			// 	}
+			// 	filename[j++] = src[i];
+			// }
+			// filename[--j] = 0;
+			// ret = bfn_runFile(filename, args);
+			// free(filename);
+			WARN("script calls are currently on hold until the bfn validator is finished.\n");
 		} else if (src[i] == '=')		// reset pointer value
 			tape[tp] = 0;
 		else if (src[i] == '+')		// increment
