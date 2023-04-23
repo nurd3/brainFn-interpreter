@@ -15,6 +15,6 @@ here is the general format for running the interpreter (using the command line):
 `tape size` - the size of the tape (default is 65536)<br>
 `flags` - explained below<br>
 ## Flags
-`-log (path)` - where to log errors\/warnings.
-`-echo (on|off)` - if marked as on, then errors\/warnings, as well as debug info will print to the terminal.
-`-debug` - makes the interpreter write debug information to the log file and or the terminal, good for understanding how the interpreter runs through your code.
+`-log (path)` - where to log errors\/warnings.<br>
+`-echo (on|off)` - if marked as on, then errors\/warnings, as well as debug info will print to the terminal.<br>
+`-debug` - makes the interpreter write debug information to the log file and or the terminal, good for understanding how the interpreter runs through your code.<br>
