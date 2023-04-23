@@ -2,7 +2,9 @@
 **WARNING: THIS BRAINFN INTERPRETER IS YET TO HAVE CONCATENATION SUPPORT.**
 <br>an interpreter for brainFn, learn about brainFn on the [Esolangs Wiki](https://esolangs.org/wiki/BrainFn)
 # Todo List
- * function stack (might be scrapped)
+* brainFn validator
+* fix script calls
+* function stack (might be scrapped)
 
 # Run Guide
 here is the general format for running the interpreter (using the command line):
