@@ -1,7 +1,7 @@
 // brainFn-interpreter/main.c
 // author    Dante Davis
 // from      2023 April 20th
-// to        2023 April 22nd
+// to        2023 April 25th
 // GNU GPL 3.0 COPYLEFT LICENSE
 // i apologize for the rather disgusting mess that is this code.
 #include <stdio.h>
@@ -9,6 +9,7 @@
 #include <string.h>
 
 #include "stacks.h"
+#include "validator.h"
 
 #ifdef _WIN32
 	#include <io.h>
@@ -24,7 +25,7 @@
 #define RED					"\033[31m"
 #define YELW				"\033[0;33m"
 #define LOG(x...)			{if (echo) printf(x); if (logMode) fprintf(DEBUG_STREAM, x);}
-#define ERR(x...)			{LOG( "bfn err: " x); errs++;}
+#define ERR(x...)			{LOG("bfn err: " x); errs++;}
 #define EXCEPTION(x...)		{LOG("bfn exception at line %d: ", line + 1); LOG(x); fclose(DEBUG_STREAM); exit(0);}
 #define WARN(x...)			{LOG("\nbfn warning at line %d: ", line); LOG(x);}
 #define DEBUG(x...)			{if (debugMode) LOG(x);}
@@ -51,7 +52,7 @@ int logMode = 0;
 int echo = 1;
 
 char *src;
-u_int len = 0;
+u_int glen = 0;
 u_int tSize = 65536;
 u_int fnCalls = 0;			// the amount of times a function has been called
 u_int scope = 0;			// how deep we are in scope
@@ -63,7 +64,7 @@ int eq(char a[], char b[], int len);
 // helper function that checks what line a given index is on in a string
 u_int getLine(u_int index, char *str);
 // the function that interprets the bfn code
-struct stack *run(u_int index, u_int len, char *src, struct stack *args);
+struct stack *run(u_int index, u_int len, struct stack *args);
 
 // main function, sets things up
 int main(int argc, char **argv) {
@@ -125,11 +126,21 @@ int main(int argc, char **argv) {
 		ERR("tape size too small\n");
 	// exit if there are any errors
 	if (errs) {
-		exit(0);
 		fclose(DEBUG_STREAM);
+		exit(0);
 	}
+
+	int invalid = isInvalid(argv[1]);
+	if (invalid) {
+		genErrMsg();
+		return invalid;
+	}
+	// initialize the label array (used for labels (duh))
+	labels = calloc(1, sizeof(struct LABEL));
+	// initiallize the loop stack
+	loopStack = calloc(1, sizeof(struct index_stack));
 	
-	src = calloc(len + 1, sizeof(char));
+	src = calloc(1, sizeof(char));
 	
 	bfn_runFile(argv[1], NULL);
 
@@ -140,46 +151,39 @@ int main(int argc, char **argv) {
 
 // helper function that runs a bfn script
 struct stack *bfn_runFile(char *filename, struct stack *args) {
-	u_int errs = 0;
-	// open the script
-	FILE *fp;
-	fp = fopen(filename, "r");
-	u_int xlen = 0;
+	u_int errs;
 	struct stack *x;
+	FILE *fp = fopen(filename, "r");
 	if (fp == NULL)	{	// if we cant access the file or it doesnt exist
 		ERR("couldn't find file %s\n", filename);
 		fclose(DEBUG_STREAM);
 		exit(0);
 	}
-
-	// initialize the label array (used for labels (duh))
-	labels = calloc(1, sizeof(struct LABEL));
-	// initiallize the loop stack
-	loopStack = calloc(1, sizeof(struct index_stack));
-
-	// read the file contents into a string
+	u_int len;
 	char *str;
 	fseek(fp, 0, SEEK_END);
-	xlen = ftell(fp);
+	len = ftell(fp);
 	fseek(fp, 0, SEEK_SET);
-	str = calloc(xlen, sizeof(char));
+	str = malloc(len * sizeof(char));
 	if (str) {
-		fread(str, 1, xlen, fp);
+		fread(str, 1, len, fp);
 	} else {
 		ERR("script is empty\n");
 		fclose(fp);
 		x = calloc(1, sizeof(struct stack));
 		return x;
 	}
-	printf(".\n");
+	glen += len;
+	
 	fclose(fp);
-	printf(".\n");
-
-	strcat(src, str);
+	src = realloc(src, (glen + 1) * sizeof(char));
+	if (glen < 0) {
+		strcpy(str, src);
+	} else {
+		strcat(src, str);
+	}
 	// run the script
-	x = run(len, len + xlen, src, args);
-
-	len += xlen;
+	x = run(glen - len, glen, args);
 	
 	return x;
 }
@@ -366,7 +370,7 @@ struct index_stack *concat(u_int *i, char *src, u_int len, u_int *lines, struct 
 	return ret->next;
 }
 // the function that interprets the bfn code
-struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
+struct stack *run(u_int index, u_int len, struct stack *args) {
 	struct stack *arg = new_stack();
 	struct stack *ret = new_stack();
 	u_int errs = 0;
@@ -387,7 +391,7 @@ struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
 			++i;
 			if (1 + i >= len) {
 				if (scope) {
-					ERR("function never cloesed\n")
+					ERR("function never closed\n")
 				} else
 					exit(0);
 			}
@@ -412,20 +416,21 @@ struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
 		else if (src[i] == '\n')
 			line++;
 		else if (src[i] == '~') {
-			// char *filename;
-			// filename = malloc(len * sizeof(char));
-			// int j = 0;
+			char *filename;
+			filename = malloc(len * sizeof(char));
+			int j = 0;
 			while (src[i] != '\n') {
 				i++;
-			// 	if (i >= len) {
-			// 		break;
-			// 	}
-			// 	filename[j++] = src[i];
+				if (i >= len) {
+					break;
+				}
+				filename[j++] = src[i];
 			}
-			// filename[--j] = 0;
-			// ret = bfn_runFile(filename, args);
-			// free(filename);
-			WARN("script calls are currently on hold until the bfn validator is finished.\n");
+			filename[--j] = 0;
+			ret = bfn_runFile(filename, args);
+			free(filename);
+			line++;
+			// WARN("script calls are currently on hold until the bfn validator is finished.\n");
 		} else if (src[i] == '=')		// reset pointer value
 			tape[tp] = 0;
 		else if (src[i] == '+')		// increment
@@ -581,7 +586,7 @@ struct stack *run(u_int index, u_int len, char *src, struct stack *args) {
 			scope++;			// increase the scope counter
 			struct index_stack *x = obj->gto;
 			do {
-				arg = run(x->index + 1, len, src, arg);	// run the function
+				arg = run(x->index + 1, glen, arg);	// run the function
 				x = x->next;
 			} while (x != NULL);
 			ret = arg;
