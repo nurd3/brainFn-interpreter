@@ -1,3 +1,9 @@
+// brainFn-interpreter/validator.h
+// author    Dante Davis
+// from      2023 April 24th
+// to        2023 April 25th
+// GNU GPL 3.0 COPYLEFT LICENSE
+// i apologize for the rather disgusting mess that is this code.
 #include <string.h>
 
 #define u_int				unsigned int
