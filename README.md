@@ -1,6 +1,5 @@
 # brainFn-interpreter
-**WARNING: THIS BRAINFN INTERPRETER IS YET TO HAVE SCRIPT CALL SUPPORT.**
-<br>an interpreter for brainFn, learn about brainFn on the [Esolangs Wiki](https://esolangs.org/wiki/BrainFn)
+<br>An interpreter for brainFn, learn about brainFn on the [Esolangs Wiki](https://esolangs.org/wiki/BrainFn)
 # Todo List
 * brainFn validator
 * fix script calls
